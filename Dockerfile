@@ -9,5 +9,6 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 ENV API_TOKEN=${API_TOKEN}
 ENV CHANNEL_USERNAME=${CHANNEL_USERNAME}
+ENV SPREADSHEET_ID=${SPREADSHEET_ID}
 
 CMD ["python", "bot.py"]
