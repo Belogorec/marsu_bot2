@@ -1,4 +1,3 @@
-
 import os
 import logging
 from aiogram import Bot, Dispatcher, executor, types
@@ -8,8 +7,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 # Telegram config
 API_TOKEN = os.getenv('API_TOKEN')
 CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME')
-
-# Google Sheets config
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
 # Logging
@@ -19,15 +16,14 @@ dp = Dispatcher(bot)
 
 # Google Sheets setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-import json
-creds_dict = json.loads(os.getenv("GOOGLE_CREDS_JSON"))
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("google_creds.json", scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).sheet1
 
+# --- Helpers --- #
 async def is_subscribed(user_id):
     try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        member = await bot.get_chat_member(chat_id=f"@{CHANNEL_USERNAME}", user_id=user_id)
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
         logging.warning(f"[ERROR] Subscription check failed: {e}")
@@ -46,6 +42,7 @@ def update_wallet(user_id, wallet):
             return True
     return False
 
+# --- Handlers --- #
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     if message.chat.type != 'private':
@@ -55,15 +52,26 @@ async def send_welcome(message: types.Message):
     username = message.from_user.username or ''
 
     if not await is_subscribed(user_id):
-        await message.answer(f'Please subscribe to {CHANNEL_USERNAME} and try /start again.')
+        await message.answer(
+            "🛰 To join the Airdrop, first subscribe to our channel:\n"
+            f"👉 https://t.me/{CHANNEL_USERNAME}\n\n"
+            "Then come back and press /start again."
+        )
         return
 
     if is_registered(user_id):
-        await message.answer("You're already participating in the Airdrop! To check your status, type /status.")
+        await message.answer(
+            "🚀 You're already aboard!\n"
+            "Want to check your status? Just type /status."
+        )
         return
 
     sheet.append_row([user_id, username, ''])
-    await message.answer("You're successfully registered! Now please send your SOLANA wallet address (only once).")
+    await message.answer(
+        "✅ You're officially in!\n"
+        "Now send your **SOLANA wallet address** (just once, no edits).\n"
+        "We'll link it to your Airdrop participation."
+    )
 
 @dp.message_handler(lambda message: message.chat.type == 'private' and message.text.startswith('5') and len(message.text.strip()) > 20)
 async def save_wallet(message: types.Message):
@@ -71,9 +79,13 @@ async def save_wallet(message: types.Message):
     wallet = message.text.strip()
 
     if update_wallet(user_id, wallet):
-        await message.answer("✅ Wallet saved. Thanks for participating!")
+        await message.answer("📡 Wallet received and saved!\nYou're all set. Airdrop transmission initiated 👨‍🚀")
     else:
-        await message.answer("😅 Wallet already saved or you're not registered. Start with /start.")
+        await message.answer(
+            "⚠️ Hmm... Something's off.\n"
+            "Either you've already submitted a wallet, or you haven't registered yet.\n\n"
+            "Start with /start and make sure you follow the instructions carefully."
+        )
 
 @dp.message_handler(commands=['status'])
 async def status(message: types.Message):
@@ -85,9 +97,14 @@ async def status(message: types.Message):
     for r in records:
         if str(r['user_id']) == user_id:
             wallet = r['wallet'] if r['wallet'] else "(not provided)"
-            await message.answer(f"Your Airdrop status:\nWallet: {wallet}")
+            await message.answer(f"📊 Airdrop Status:\nSOLANA Wallet → `{wallet}`", parse_mode="Markdown")
             return
-    await message.answer("You're not registered yet. Send /start to join.")
+    await message.answer("🔍 No record found.\nSend /start to register for the Airdrop mission.")
 
+@dp.message_handler(commands=['ping'])
+async def ping(message: types.Message):
+    await message.answer("✅ I'm online and ready for launch 🚀")
+
+# --- Run --- #
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=False)
