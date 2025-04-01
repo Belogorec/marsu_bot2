@@ -1,6 +1,4 @@
 import os
-print(f"GOOGLE_CREDS_BASE64 exists? {bool(os.getenv('GOOGLE_CREDS_BASE64'))}")
-import os
 import logging
 import base64
 import json
@@ -9,8 +7,9 @@ from aiogram import Bot, Dispatcher, executor, types
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Logging
-logging.basicConfig(level=logging.INFO)
+# 🔍 Отладочные переменные — для проверки в логах
+print(f"TEST env? {os.getenv('TEST')}")
+print(f"GOOGLE_CREDS_BASE64 exists? {bool(os.getenv('GOOGLE_CREDS_BASE64'))}")
 
 # Telegram config
 API_TOKEN = os.getenv('API_TOKEN')
@@ -18,11 +17,16 @@ CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 GOOGLE_CREDS_BASE64 = os.getenv('GOOGLE_CREDS_BASE64')
 
-# Telegram
+# Проверка наличия переменной с ключом
+if not GOOGLE_CREDS_BASE64:
+    raise ValueError("❌ GOOGLE_CREDS_BASE64 is not set. Check your Railway Variables.")
+
+# Telegram и Google Sheets инициализация
+logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-# Google Sheets setup
+# Авторизация по ключу (из base64 → JSON → dict)
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = json.loads(base64.b64decode(GOOGLE_CREDS_BASE64))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -99,6 +103,6 @@ async def status(message: types.Message):
             return
     await message.answer("🙈 You're not registered yet.\nType /start to join the Airdrop.")
 
-# Запуск бота
+# Старт бота
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=False)
