@@ -1,4 +1,6 @@
 import os
+print(f"GOOGLE_CREDS_BASE64 exists? {bool(os.getenv('GOOGLE_CREDS_BASE64'))}")
+import os
 import logging
 import base64
 import json
