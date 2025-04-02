@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, executor, types
 import gspread
 from google.oauth2.service_account import Credentials
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import re
 
 # Load config from env
 API_TOKEN = os.getenv('API_TOKEN')
@@ -18,7 +19,9 @@ GOOGLE_CREDS_BASE64 = os.getenv('GOOGLE_CREDS_BASE64')
 ADMINS = ['NadyaOva', 'cinichenko']
 
 # Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
+
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
@@ -29,6 +32,7 @@ async def setup_bot_username():
     global BOT_USERNAME
     me = await bot.get_me()
     BOT_USERNAME = me.username
+    logger.info(f"Bot username is @{BOT_USERNAME}")
 
 # Google Sheets setup
 if not GOOGLE_CREDS_BASE64:
@@ -46,6 +50,7 @@ log_sheet = sheet.worksheet("log")
 def log_action(user_id, username, action, details=''):
     timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
     log_sheet.append_row([timestamp, user_id, username, action, details])
+    logger.info(f"Log: {user_id=} {username=} {action=} {details=}")
 
 def is_registered(user_id):
     records = users_sheet.get_all_records()
@@ -55,21 +60,22 @@ def update_wallet(user_id, wallet):
     try:
         cell = users_sheet.find(str(user_id))
         row = cell.row
-        wallet_cell = users_sheet.cell(row, 3)
-        if not wallet_cell.value:
-            users_sheet.update_cell(row, 3, wallet)
-            log_action(user_id, "", "Wallet updated", wallet)
-            return True
+        users_sheet.update_cell(row, 3, wallet)
+        log_action(user_id, "", "Wallet updated", wallet)
+        return True
     except Exception as e:
-        logging.error(f"[ERROR] update_wallet: {e}")
+        logger.error(f"[ERROR] update_wallet: {e}")
     return False
+
+def validate_wallet(wallet):
+    return bool(re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", wallet))
 
 async def is_subscribed(user_id):
     try:
         member = await bot.get_chat_member(chat_id=f"@{CHANNEL_USERNAME}", user_id=user_id)
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
-        logging.warning(f"[ERROR] Subscription check failed: {e}")
+        logger.warning(f"[ERROR] Subscription check failed: {e}")
         return False
 
 def get_referral_count(referrer_id):
@@ -103,16 +109,18 @@ async def send_welcome(message: types.Message):
         log_action(user_id, username, "Registered", f"Referred by: {referrer_id if referrer_id else 'None'}")
 
     await message.answer(
-        "🚀 <b>Welcome to the MarsUnity Airdrop!</b>\n\n"
-        "Complete these tasks to join the airdrop:\n\n"
-        "1. Follow us on <a href=\"https://x.com/MarsUnity42\">Twitter</a>\n"
-        "2. Join our <a href=\"https://t.me/marsunity42\">Telegram</a>\n"
-        "3. Invite friends (see button below)\n"
-        "4. Submit your Solana wallet address (starting with 5...)\n\n"
-        "To participate, you <b>must</b>:\n"
-        "- Be subscribed to @marsunity42\n"
-        "- Provide a valid Solana address\n\n"
-        "Use the buttons below to continue:",
+        "🚀 <b>Welcome to the MarsUnity Meme Coin AirDrop!</b> 🌌\n\n"
+        "Get ready to claim your meme coin with a cosmic soul! ✨\n\n"
+        "To join the fun, simply:\n\n"
+        "🚀 Follow us on <a href='https://x.com/MarsUnity42'>Twitter</a>\n"
+        "📡 Join our <a href='https://t.me/marsunity42'>Telegram channel</a>\n"
+        "👨‍🚀 Invite your friends (use the handy button below!)\n"
+        "🛸 Submit your Solana wallet address\n\n"
+        "📌 <b>Important Conditions:</b>\n"
+        "- AirDrop continues until all allocated tokens are claimed.\n"
+        "- Each wallet can claim tokens once—no double dips allowed!\n"
+        "- We reserve the right to verify compliance with all conditions.\n\n"
+        "Once all tokens designated for the AirDrop are claimed, the event will end—so hurry! 🚨✨",
         parse_mode='HTML',
         reply_markup=welcome_keyboard
     )
@@ -145,25 +153,25 @@ async def admin_stats(message: types.Message):
     with_wallet = sum(1 for r in records if r.get('wallet'))
     await message.answer(f"👥 Total users: {total}\n💳 Wallets submitted: {with_wallet}")
 
-@dp.message_handler(lambda message: message.chat.type == 'private' and message.text.startswith('5') and len(message.text.strip()) > 20)
+@dp.message_handler(lambda message: message.chat.type == 'private')
 async def save_wallet(message: types.Message):
     user_id = message.from_user.id
     wallet = message.text.strip()
 
-    if not wallet.startswith('5') or len(wallet) < 32:
-        await message.answer("⚠️ Invalid wallet format. Please check and resend.")
-        return
-
-    if update_wallet(user_id, wallet):
-        await message.answer("✅ Wallet saved successfully!")
+    if validate_wallet(wallet):
+        updated = update_wallet(user_id, wallet)
+        if updated:
+            await message.answer("✅ Wallet updated successfully!")
+        else:
+            await message.answer("✅ Wallet saved successfully!")
     else:
-        await message.answer("ℹ️ Wallet already saved or registration missing. Use /start.")
+        await message.answer("⚠️ Invalid Solana wallet address. Make sure it is Base58 and 32-44 characters long.")
 
 @dp.callback_query_handler(lambda c: c.data == 'wallet')
 async def handle_wallet(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id,
-        "💳 Please enter your Solana wallet address (it should start with `5...`).",
+        "💳 Please enter your Solana wallet address (must be 32–44 characters and Base58 valid).",
         parse_mode="Markdown")
 
 @dp.callback_query_handler(lambda c: c.data == 'invite')
