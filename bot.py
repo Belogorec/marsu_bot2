@@ -23,6 +23,14 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
+# Get bot info
+BOT_USERNAME = None
+
+async def setup_bot_username():
+    global BOT_USERNAME
+    me = await bot.get_me()
+    BOT_USERNAME = me.username
+
 # Google Sheets setup
 if not GOOGLE_CREDS_BASE64:
     raise ValueError("❌ GOOGLE_CREDS_BASE64 is not set. Check your Railway Variables.")
@@ -170,10 +178,10 @@ async def admin_export(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == 'invite')
 async def handle_invite(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    referral_link = f"https://t.me/{bot.username}?start={callback_query.from_user.id}"
+    referral_link = f"https://t.me/{BOT_USERNAME}?start={callback_query.from_user.id}"
     await bot.send_message(callback_query.from_user.id,
         f"🚀 Invite your friends to join MarsUnity and receive cosmic karma:\n\n"
-        f"`Join MarsUnity — the meme token with purpose! 🚀 {referral_link}`",
+        f"Join MarsUnity — the meme token with purpose! 🚀 {referral_link}",
         parse_mode="Markdown")
 
 @dp.callback_query_handler(lambda c: c.data == 'wallet')
@@ -202,4 +210,7 @@ async def handle_buy(callback_query: types.CallbackQuery):
         parse_mode='Markdown')
 
 if __name__ == '__main__':
+    from asyncio import get_event_loop
+    loop = get_event_loop()
+    loop.run_until_complete(setup_bot_username())
     executor.start_polling(dp, skip_updates=True)
