@@ -2,12 +2,13 @@ import os
 import json
 import base64
 import logging
-from datetime import datetime
+import datetime
 from aiogram import Bot, Dispatcher, executor, types
 import gspread
 from google.oauth2.service_account import Credentials
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Telegram config
+# Load config from env
 API_TOKEN = os.getenv('API_TOKEN')
 CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
@@ -20,26 +21,20 @@ dp = Dispatcher(bot)
 
 # Google Sheets setup
 if not GOOGLE_CREDS_BASE64:
-    raise ValueError("❌ GOOGLE_CREDS_BASE64 is not set. Check Railway Variables.")
+    raise ValueError("\u274c GOOGLE_CREDS_BASE64 is not set. Check your Railway Variables.")
 
 creds_dict = json.loads(base64.b64decode(GOOGLE_CREDS_BASE64))
 credentials = Credentials.from_service_account_info(creds_dict, scopes=[
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-])
+    "https://www.googleapis.com/auth/drive"])
 client = gspread.authorize(credentials)
 sheet = client.open_by_key(SPREADSHEET_ID)
 users_sheet = sheet.worksheet("users")
 log_sheet = sheet.worksheet("log")
 
-def log_action(user_id, username, action, details=""):
-    log_sheet.append_row([
-        datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-        str(user_id),
-        username,
-        action,
-        details
-    ])
+def log_action(user_id, username, action, details=''):
+    timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    log_sheet.append_row([timestamp, user_id, username, action, details])
 
 def is_registered(user_id):
     records = users_sheet.get_all_records()
@@ -52,7 +47,7 @@ def update_wallet(user_id, wallet):
         wallet_cell = users_sheet.cell(row, 3)
         if not wallet_cell.value:
             users_sheet.update_cell(row, 3, wallet)
-            log_action(user_id, "", "Wallet Updated", wallet)
+            log_action(user_id, "", "Wallet updated", wallet)
             return True
     except Exception as e:
         logging.error(f"[ERROR] update_wallet: {e}")
@@ -66,6 +61,13 @@ async def is_subscribed(user_id):
         logging.warning(f"[ERROR] Subscription check failed: {e}")
         return False
 
+welcome_keyboard = InlineKeyboardMarkup(row_width=2).add(
+    InlineKeyboardButton("\ud83d\udcec Invite Friends", callback_data="invite"),
+    InlineKeyboardButton("\ud83d\udce5 Submit Wallet", callback_data="wallet"),
+    InlineKeyboardButton("\ud83e\ude50 About MarsUnity", callback_data="about"),
+    InlineKeyboardButton("\ud83d\udcb1 How to Buy", callback_data="buy"),
+)
+
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     if message.chat.type != 'private':
@@ -75,26 +77,42 @@ async def send_welcome(message: types.Message):
     username = message.from_user.username or ''
 
     if not await is_subscribed(user_id):
-        await message.answer(f"👀 Please subscribe to @{CHANNEL_USERNAME} and try again.")
+        await message.answer("\ud83d\udc40 Please subscribe to @marsunity42 and then type /start again.")
         return
 
-    if is_registered(user_id):
-        await message.answer("😄 You're already participating! To check status, type /status.")
-        return
+    if not is_registered(user_id):
+        users_sheet.append_row([user_id, username, ''])
+        log_action(user_id, username, "Registered")
 
-    users_sheet.append_row([user_id, username, ''])
-    log_action(user_id, username, "Registered")
-    await message.answer("🎉 You're registered!\n\nNow send your SOLANA wallet address (starting with 5...).")
+    await message.answer(
+        "\ud83d\ude80 Welcome to the *MarsUnity Airdrop*!\n\n"
+        "Complete these tasks to get *1000 MarsU tokens*:\n\n"
+        "1. Follow us on [Twitter](https://x.com/MarsUnity42)\n"
+        "2. Join our [Telegram](https://t.me/marsunity42)\n"
+        "3. Invite friends (see button below)\n"
+        "4. Submit your Solana wallet address (starting with `5...`)\n\n"
+        "To participate, you *must*:\n"
+        "- Be subscribed to @marsunity42\n"
+        "- Provide a valid Solana address\n\n"
+        "Use the buttons below to continue:",
+        parse_mode='Markdown',
+        reply_markup=welcome_keyboard
+    )
 
-@dp.message_handler(lambda message: message.chat.type == 'private' and message.text.startswith('5') and len(message.text.strip()) > 20)
-async def save_wallet(message: types.Message):
+@dp.message_handler(lambda message: message.chat.type == 'private')
+async def handle_wallet_input(message: types.Message):
     user_id = message.from_user.id
     wallet = message.text.strip()
 
-    if update_wallet(user_id, wallet):
-        await message.answer("✅ Wallet saved successfully! You're all set.")
+    if wallet.startswith('5') and len(wallet) > 20:
+        if update_wallet(user_id, wallet):
+            await message.answer("\u2705 Wallet saved successfully! You're all set for the airdrop.")
+        else:
+            await message.answer("\u26c5 Wallet already submitted or registration not started. Type /start to begin.")
+    elif wallet.lower() in ['/status', '/help', '/start']:
+        pass
     else:
-        await message.answer("😅 You already submitted a wallet or haven’t started yet. Type /start to begin.")
+        await message.answer("\u274c This doesn't look like a valid Solana wallet. It should start with `5...`.")
 
 @dp.message_handler(commands=['status'])
 async def check_status(message: types.Message):
@@ -103,9 +121,54 @@ async def check_status(message: types.Message):
     for r in records:
         if str(r['user_id']) == user_id:
             wallet = r['wallet'] if r['wallet'] else "(not provided)"
-            await message.answer(f"📋 Your Airdrop status:\n\n🔹 Wallet: {wallet}")
+            await message.answer(f"\ud83d\udccb Your Airdrop status:\n\n\ud83d\udd39 Wallet: {wallet}")
             return
-    await message.answer("👋 You're not registered yet. Send /start to join.")
+    await message.answer("\ud83d\udc4b You're not registered yet. Send /start to join.")
+
+@dp.message_handler(commands=['help'])
+async def show_help(message: types.Message):
+    await message.answer(
+        "\ud83d\udd2e *What is MarsUnity?*\n"
+        "MarsUnity is a meme token with philosophy and irony.\n"
+        "We're building a new life on Mars, rewarding those who believe early.\n\n"
+        "\ud83d\udcc8 Buy MarsU: https://dexscreener.com/solana/df9oesxjyjhjwyctwedpm66yojez2yve5qy6vwmfmu42\n"
+        "\ud83c\udf10 Website: https://marsunity.com\n\n"
+        "Commands:\n/start — restart the bot\n/status — check your status\n/help — info about the project",
+        parse_mode='Markdown'
+    )
+
+@dp.callback_query_handler(lambda c: c.data == 'invite')
+async def handle_invite(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id,
+        "\ud83d\ude80 Invite your friends to join MarsUnity and receive cosmic karma:\n\n"
+        "`Join MarsUnity — the meme token with purpose! \ud83d\ude80 t.me/marsunity42`",
+        parse_mode="Markdown")
+
+@dp.callback_query_handler(lambda c: c.data == 'wallet')
+async def handle_wallet_info(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id,
+        "\ud83d\udce5 Just type your Solana wallet address (starting with `5...`) right here in the chat.")
+
+@dp.callback_query_handler(lambda c: c.data == 'about')
+async def handle_about(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id,
+        "\ud83e\ude90 *About MarsUnity:*\n"
+        "MarsUnity is a meme token with a mission. Philosophy meets irony on the red planet.\n\n"
+        "\ud83c\udf10 Website: https://marsunity.com",
+        parse_mode='Markdown')
+
+@dp.callback_query_handler(lambda c: c.data == 'buy')
+async def handle_buy(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id,
+        "\ud83d\udcb1 *How to Buy MarsU:*\n"
+        "Trade on Dexscreener:\n"
+        "https://dexscreener.com/solana/df9oesxjyjhjwyctwedpm66yojez2yve5qy6vwmfmu42\n\n"
+        "Make sure you have SOL in your wallet to trade.",
+        parse_mode='Markdown')
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
