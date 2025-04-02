@@ -159,6 +159,13 @@ async def save_wallet(message: types.Message):
     else:
         await message.answer("ℹ️ Wallet already saved or registration missing. Use /start.")
 
+@dp.callback_query_handler(lambda c: c.data == 'wallet')
+async def handle_wallet(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id,
+        "💳 Please enter your Solana wallet address (it should start with `5...`).",
+        parse_mode="Markdown")
+
 @dp.callback_query_handler(lambda c: c.data == 'invite')
 async def handle_invite(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
