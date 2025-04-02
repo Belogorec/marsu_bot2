@@ -6,13 +6,15 @@ import datetime
 from aiogram import Bot, Dispatcher, executor, types
 import gspread
 from google.oauth2.service_account import Credentials
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+import csv
 
 # Load config from env
 API_TOKEN = os.getenv('API_TOKEN')
 CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 GOOGLE_CREDS_BASE64 = os.getenv('GOOGLE_CREDS_BASE64')
+ADMIN_ID = os.getenv('ADMIN_ID')  # Admin user ID
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -61,11 +63,15 @@ async def is_subscribed(user_id):
         logging.warning(f"[ERROR] Subscription check failed: {e}")
         return False
 
+def get_referral_count(referrer_id):
+    records = users_sheet.get_all_records()
+    return sum(1 for r in records if str(r.get('referrer_id')) == str(referrer_id))
+
 welcome_keyboard = InlineKeyboardMarkup(row_width=2).add(
-    InlineKeyboardButton("📬 Invite Friends", callback_data="invite"),
-    InlineKeyboardButton("📥 Submit Wallet", callback_data="wallet"),
-    InlineKeyboardButton("🪐 About MarsUnity", callback_data="about"),
-    InlineKeyboardButton("💱 How to Buy", callback_data="buy"),
+    InlineKeyboardButton("\ud83d\udcec Invite Friends", callback_data="invite"),
+    InlineKeyboardButton("\ud83d\udce5 Submit Wallet", callback_data="wallet"),
+    InlineKeyboardButton("\ud83d\ude80 About MarsUnity", callback_data="about"),
+    InlineKeyboardButton("\ud83d\udcb1 How to Buy", callback_data="buy"),
 )
 
 @dp.message_handler(commands=['start'])
@@ -77,15 +83,18 @@ async def send_welcome(message: types.Message):
     username = message.from_user.username or ''
 
     if not await is_subscribed(user_id):
-        await message.answer("👀 Please subscribe to @marsunity42 and then type /start again.")
+        await message.answer("\ud83d\udc40 Please subscribe to @marsunity42 and then type /start again.")
         return
 
+    args = message.get_args()
+    referrer_id = args if args.isdigit() else ''
+
     if not is_registered(user_id):
-        users_sheet.append_row([user_id, username, ''])
-        log_action(user_id, username, "Registered")
+        users_sheet.append_row([user_id, username, '', referrer_id])
+        log_action(user_id, username, "Registered", f"Referred by: {referrer_id if referrer_id else 'None'}")
 
     await message.answer(
-        "\U0001F680 Welcome to the *MarsUnity Airdrop*!\n\n"
+        "\ud83d\ude80 Welcome to the *MarsUnity Airdrop*!\n\n"
         "Complete these tasks to join the airdrop:\n\n"
         "1. Follow us on [Twitter](https://x.com/MarsUnity42)\n"
         "2. Join our [Telegram](https://t.me/marsunity42)\n"
@@ -106,13 +115,13 @@ async def handle_wallet_input(message: types.Message):
 
     if wallet.startswith('5') and len(wallet) > 20:
         if update_wallet(user_id, wallet):
-            await message.answer("✅ Wallet saved successfully! You're all set for the airdrop.")
+            await message.answer("\u2705 Wallet saved successfully! You're all set for the airdrop.")
         else:
-            await message.answer("⛅ Wallet already submitted or registration not started. Type /start to begin.")
-    elif wallet.lower() in ['/status', '/help', '/start']:
+            await message.answer("\u26c5 Wallet already submitted or registration not started. Type /start to begin.")
+    elif wallet.lower() in ['/status', '/help', '/start', '/admin']:
         pass
     else:
-        await message.answer("❌ This doesn't look like a valid Solana wallet. It should start with `5...`.")
+        await message.answer("\u274c This doesn't look like a valid Solana wallet. It should start with `5...`.")
 
 @dp.message_handler(commands=['status'])
 async def check_status(message: types.Message):
@@ -121,50 +130,70 @@ async def check_status(message: types.Message):
     for r in records:
         if str(r['user_id']) == user_id:
             wallet = r['wallet'] if r['wallet'] else "(not provided)"
-            await message.answer(f"📋 Your Airdrop status:\n\n🔹 Wallet: {wallet}")
+            referrals = get_referral_count(user_id)
+            await message.answer(
+                f"\ud83d\udccb Your Airdrop status:\n\n\ud83d\udd39 Wallet: {wallet}\n\ud83d\udc65 Referrals: {referrals}"
+            )
             return
-    await message.answer("👋 You're not registered yet. Send /start to join.")
+    await message.answer("\ud83d\udc4b You're not registered yet. Send /start to join.")
 
 @dp.message_handler(commands=['help'])
 async def show_help(message: types.Message):
     await message.answer(
-        "🔮 *What is MarsUnity?*\n"
+        "\ud83d\udd2e *What is MarsUnity?*\n"
         "MarsUnity is a meme token with philosophy and irony.\n"
         "We're building a new life on Mars, rewarding those who believe early.\n\n"
-        "📈 Buy MarsU: https://dexscreener.com/solana/df9oesxjyjhjwyctwedpm66yojez2yve5qy6vwmfmu42\n"
-        "🌐 Website: https://marsunity.com\n\n"
+        "\ud83d\udcc8 Buy MarsU: https://dexscreener.com/solana/df9oesxjyjhjwyctwedpm66yojez2yve5qy6vwmfmu42\n"
+        "\ud83c\udf10 Website: https://marsunity.com\n\n"
         "Commands:\n/start — restart the bot\n/status — check your status\n/help — info about the project",
         parse_mode='Markdown'
     )
 
+@dp.message_handler(commands=['admin'])
+async def admin_export(message: types.Message):
+    if str(message.from_user.id) != ADMIN_ID:
+        await message.answer("\u274c Access denied.")
+        return
+    try:
+        users = users_sheet.get_all_values()
+        filename = "marsunity_users.csv"
+        with open(filename, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerows(users)
+        await message.answer_document(InputFile(filename))
+    except Exception as e:
+        logging.error(f"[ADMIN EXPORT ERROR] {e}")
+        await message.answer("\u26a0\ufe0f Failed to fetch users data.")
+
 @dp.callback_query_handler(lambda c: c.data == 'invite')
 async def handle_invite(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
+    referral_link = f"https://t.me/{bot.username}?start={callback_query.from_user.id}"
     await bot.send_message(callback_query.from_user.id,
-        "🚀 Invite your friends to join MarsUnity and receive cosmic karma:\n\n"
-        "`Join MarsUnity — the meme token with purpose! 🚀 t.me/marsunity42`",
+        f"\ud83d\ude80 Invite your friends to join MarsUnity and receive cosmic karma:\n\n"
+        f"`Join MarsUnity — the meme token with purpose! \ud83d\ude80 {referral_link}`",
         parse_mode="Markdown")
 
 @dp.callback_query_handler(lambda c: c.data == 'wallet')
 async def handle_wallet_info(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id,
-        "📥 Just type your Solana wallet address (starting with `5...`) right here in the chat.")
+        "\ud83d\udce5 Just type your Solana wallet address (starting with `5...`) right here in the chat.")
 
 @dp.callback_query_handler(lambda c: c.data == 'about')
 async def handle_about(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id,
-        "🪐 *About MarsUnity:*\n"
+        "\ud83e\uded0 *About MarsUnity:*\n"
         "MarsUnity is a meme token with a mission. Philosophy meets irony on the red planet.\n\n"
-        "🌐 Website: https://marsunity.com",
+        "\ud83c\udf10 Website: https://marsunity.com",
         parse_mode='Markdown')
 
 @dp.callback_query_handler(lambda c: c.data == 'buy')
 async def handle_buy(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id,
-        "💱 *How to Buy MarsU:*\n"
+        "\ud83d\udcb1 *How to Buy MarsU:*\n"
         "Trade on Dexscreener:\n"
         "https://dexscreener.com/solana/df9oesxjyjhjwyctwedpm66yojez2yve5qy6vwmfmu42\n\n"
         "Make sure you have SOL in your wallet to trade.",
