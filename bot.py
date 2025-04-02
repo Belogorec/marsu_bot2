@@ -6,8 +6,7 @@ import datetime
 from aiogram import Bot, Dispatcher, executor, types
 import gspread
 from google.oauth2.service_account import Credentials
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
-import csv
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Load config from env
 API_TOKEN = os.getenv('API_TOKEN')
@@ -78,10 +77,10 @@ def get_referral_count(referrer_id):
     return sum(1 for r in records if str(r.get('referrer_id')) == str(referrer_id))
 
 welcome_keyboard = InlineKeyboardMarkup(row_width=2).add(
-    InlineKeyboardButton("\ud83d\udcec Invite Friends", callback_data="invite"),
-    InlineKeyboardButton("\ud83d\udce5 Submit Wallet", callback_data="wallet"),
-    InlineKeyboardButton("\ud83d\ude80 About MarsUnity", callback_data="about"),
-    InlineKeyboardButton("\ud83d\udcb1 How to Buy", callback_data="buy"),
+    InlineKeyboardButton("📬 Invite Friends", callback_data="invite"),
+    InlineKeyboardButton("📥 Submit Wallet", callback_data="wallet"),
+    InlineKeyboardButton("🚀 About MarsUnity", callback_data="about"),
+    InlineKeyboardButton("💰 How to Buy", callback_data="buy"),
 )
 
 @dp.message_handler(commands=['start'])
@@ -93,7 +92,7 @@ async def send_welcome(message: types.Message):
     username = message.from_user.username or ''
 
     if not await is_subscribed(user_id):
-        await message.answer("\ud83d\udc40 Please subscribe to @marsunity42 and then type /start again.")
+        await message.answer("👀 Please subscribe to @marsunity42 and then type /start again.")
         return
 
     args = message.get_args()
@@ -104,7 +103,7 @@ async def send_welcome(message: types.Message):
         log_action(user_id, username, "Registered", f"Referred by: {referrer_id if referrer_id else 'None'}")
 
     await message.answer(
-        "\ud83d\ude80 <b>Welcome to the MarsUnity Airdrop!</b>\n\n"
+        "🚀 <b>Welcome to the MarsUnity Airdrop!</b>\n\n"
         "Complete these tasks to join the airdrop:\n\n"
         "1. Follow us on <a href=\"https://x.com/MarsUnity42\">Twitter</a>\n"
         "2. Join our <a href=\"https://t.me/marsunity42\">Telegram</a>\n"
@@ -118,17 +117,73 @@ async def send_welcome(message: types.Message):
         reply_markup=welcome_keyboard
     )
 
+@dp.message_handler(commands=['status'])
+async def status(message: types.Message):
+    user_id = str(message.from_user.id)
+    records = users_sheet.get_all_records()
+    for row in records:
+        if str(row['user_id']) == user_id:
+            wallet = row['wallet'] if row['wallet'] else "(not provided)"
+            invites = get_referral_count(user_id)
+            await message.answer(
+                f"📋 Your Airdrop status:\n\n"
+                f"🔹 Wallet: {wallet}\n"
+                f"🔸 Invites: {invites}"
+            )
+            return
+    await message.answer("You are not registered. Please type /start to begin.")
+
+@dp.message_handler(commands=['admin'])
+async def admin_stats(message: types.Message):
+    username = message.from_user.username
+    if username not in ADMINS:
+        await message.answer("⛔ You are not allowed to use this command.")
+        return
+
+    records = users_sheet.get_all_records()
+    total = len(records)
+    with_wallet = sum(1 for r in records if r.get('wallet'))
+    await message.answer(f"👥 Total users: {total}\n💳 Wallets submitted: {with_wallet}")
+
+@dp.message_handler(lambda message: message.chat.type == 'private' and message.text.startswith('5') and len(message.text.strip()) > 20)
+async def save_wallet(message: types.Message):
+    user_id = message.from_user.id
+    wallet = message.text.strip()
+
+    if not wallet.startswith('5') or len(wallet) < 32:
+        await message.answer("⚠️ Invalid wallet format. Please check and resend.")
+        return
+
+    if update_wallet(user_id, wallet):
+        await message.answer("✅ Wallet saved successfully!")
+    else:
+        await message.answer("ℹ️ Wallet already saved or registration missing. Use /start.")
+
 @dp.callback_query_handler(lambda c: c.data == 'invite')
 async def handle_invite(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     referral_link = f"https://t.me/{BOT_USERNAME}?start={callback_query.from_user.id}"
     await bot.send_message(callback_query.from_user.id,
-        f"\ud83d\ude80 Invite your friends to join MarsUnity and receive cosmic karma:\n\n"
-        f"<b>Join MarsUnity</b> — the meme token with purpose!\n\n"
-        f"Your invite link:\n{referral_link}",
+        "🚀 Invite your friends to join MarsUnity and receive cosmic karma!\n\n"
+        "<b>Join MarsUnity</b> — the meme token with purpose.\n\n"
+        f"<b>Your invite link:</b>\n{referral_link}",
         parse_mode="HTML")
 
-# (остальной код остаётся без изменений)
+@dp.callback_query_handler(lambda c: c.data == 'about')
+async def handle_about(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id,
+        "🌌 <b>About MarsUnity</b>\n\nMarsUnity is a meme token building a brave new world on Solana.\n\n"
+        "Explore more: https://marsunity.com",
+        parse_mode="HTML")
+
+@dp.callback_query_handler(lambda c: c.data == 'buy')
+async def handle_buy(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id,
+        "💰 <b>How to Buy</b>\n\nYou can buy MarsU tokens on Solana DEXs like Jupiter or through this link:\n"
+        "https://dexscreener.com/solana/df9oesxjyjhjwyctwedpm66yojez2yve5qy6vwmfmu42",
+        parse_mode="HTML")
 
 if __name__ == '__main__':
     from asyncio import get_event_loop
