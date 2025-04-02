@@ -85,8 +85,7 @@ async def send_welcome(message: types.Message):
         log_action(user_id, username, "Registered")
 
     await message.answer(
-        "🚀 Welcome to the *MarsUnity Airdrop*!
-\n\n"
+        "\U0001F680 Welcome to the *MarsUnity Airdrop*!\n\n"
         "Complete these tasks to join the airdrop:\n\n"
         "1. Follow us on [Twitter](https://x.com/MarsUnity42)\n"
         "2. Join our [Telegram](https://t.me/marsunity42)\n"
