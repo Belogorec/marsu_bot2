@@ -60,12 +60,17 @@ def update_wallet(user_id, wallet):
     try:
         cell = users_sheet.find(str(user_id))
         row = cell.row
+        current_wallet = users_sheet.cell(row, 3).value
         users_sheet.update_cell(row, 3, wallet)
-        log_action(user_id, "", "Wallet updated", wallet)
-        return True
+        if current_wallet:
+            log_action(user_id, "", "Wallet updated", wallet)
+            return "updated"
+        else:
+            log_action(user_id, "", "Wallet saved", wallet)
+            return "saved"
     except Exception as e:
         logger.error(f"[ERROR] update_wallet: {e}")
-    return False
+    return "error"
 
 def validate_wallet(wallet):
     return bool(re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", wallet))
@@ -116,6 +121,7 @@ async def send_welcome(message: types.Message):
         "📡 Join our <a href='https://t.me/marsunity42'>Telegram channel</a>\n"
         "👨‍🚀 Invite your friends (use the handy button below!)\n"
         "🛸 Submit your Solana wallet address\n\n"
+        "🎉 Guaranteed AirDrop for each wallet!\n\n"
         "📌 <b>Important Conditions:</b>\n"
         "- AirDrop continues until all allocated tokens are claimed.\n"
         "- Each wallet can claim tokens once—no double dips allowed!\n"
@@ -159,19 +165,21 @@ async def save_wallet(message: types.Message):
     wallet = message.text.strip()
 
     if validate_wallet(wallet):
-        updated = update_wallet(user_id, wallet)
-        if updated:
-            await message.answer("✅ Wallet updated successfully!")
-        else:
+        result = update_wallet(user_id, wallet)
+        if result == "updated":
+            await message.answer("✅ Your wallet has been updated.")
+        elif result == "saved":
             await message.answer("✅ Wallet saved successfully!")
+        else:
+            await message.answer("⚠️ Something went wrong while saving your wallet.")
     else:
-        await message.answer("⚠️ Invalid Solana wallet address. Make sure it is Base58 and 32-44 characters long.")
+        await message.answer("⚠️ Invalid Solana wallet address. It must be 32–44 characters long and use only valid characters.")
 
 @dp.callback_query_handler(lambda c: c.data == 'wallet')
 async def handle_wallet(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id,
-        "💳 Please enter your Solana wallet address (must be 32–44 characters and Base58 valid).",
+        "💳 Please enter your Solana wallet address.",
         parse_mode="Markdown")
 
 @dp.callback_query_handler(lambda c: c.data == 'invite')
