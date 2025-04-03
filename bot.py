@@ -1,31 +1,34 @@
 import os
 import json
-import base64
 import logging
 import datetime
-from aiogram import Bot, Dispatcher, executor, types
-import gspread
-from google.oauth2.service_account import Credentials
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import re
-
-# Load config from env
-API_TOKEN = os.getenv('API_TOKEN')
-CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME')
-SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
-GOOGLE_CREDS_BASE64 = os.getenv('GOOGLE_CREDS_BASE64')
-
-# Admin usernames
-ADMINS = ['NadyaOva', 'cinichenko']
+import requests
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
+# ENV vars
+API_TOKEN = os.getenv('API_TOKEN')
+CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME')
+AIRTABLE_API_KEY = os.getenv('AIRTABLE_API_KEY')
+AIRTABLE_BASE_ID = os.getenv('AIRTABLE_BASE_ID')
+
+# Airtable setup
+AIRTABLE_USERS_URL = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/users"
+AIRTABLE_LOG_URL = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/log"
+HEADERS = {
+    "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+    "Content-Type": "application/json"
+}
+
+ADMINS = ['NadyaOva', 'cinichenko']
+
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
-
-# Get bot info
 BOT_USERNAME = None
 
 async def setup_bot_username():
@@ -34,47 +37,41 @@ async def setup_bot_username():
     BOT_USERNAME = me.username
     logger.info(f"Bot username is @{BOT_USERNAME}")
 
-# Google Sheets setup
-if not GOOGLE_CREDS_BASE64:
-    raise ValueError("❌ GOOGLE_CREDS_BASE64 is not set. Check your Railway Variables.")
-
-creds_dict = json.loads(base64.b64decode(GOOGLE_CREDS_BASE64))
-
-# Fix escaped newlines in private key
-if "private_key" in creds_dict:
-    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-
-credentials = Credentials.from_service_account_info(creds_dict, scopes=[
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"])
-client = gspread.authorize(credentials)
-sheet = client.open_by_key(SPREADSHEET_ID)
-users_sheet = sheet.worksheet("users")
-log_sheet = sheet.worksheet("log")
-
 def log_action(user_id, username, action, details=''):
-    timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-    log_sheet.append_row([timestamp, user_id, username, action, details])
-    logger.info(f"Log: {user_id=} {username=} {action=} {details=}")
+    timestamp = datetime.datetime.utcnow().isoformat()
+    data = {
+        "fields": {
+            "timestamp": timestamp,
+            "user_id": str(user_id),
+            "username": username or '',
+            "action": action,
+            "details": details
+        }
+    }
+    requests.post(AIRTABLE_LOG_URL, headers=HEADERS, json=data)
 
 def is_registered(user_id):
-    records = users_sheet.get_all_records()
-    return any(str(r['user_id']) == str(user_id) for r in records)
+    r = requests.get(AIRTABLE_USERS_URL, headers=HEADERS)
+    records = r.json().get("records", [])
+    return any(rec['fields'].get('user_id') == str(user_id) for rec in records)
+
+def get_user_record(user_id):
+    r = requests.get(AIRTABLE_USERS_URL, headers=HEADERS)
+    records = r.json().get("records", [])
+    for rec in records:
+        if rec['fields'].get('user_id') == str(user_id):
+            return rec
+    return None
 
 def update_wallet(user_id, wallet):
-    try:
-        cell = users_sheet.find(str(user_id))
-        row = cell.row
-        current_wallet = users_sheet.cell(row, 3).value
-        users_sheet.update_cell(row, 3, wallet)
-        if current_wallet:
-            log_action(user_id, "", "Wallet updated", wallet)
-            return "updated"
-        else:
-            log_action(user_id, "", "Wallet saved", wallet)
-            return "saved"
-    except Exception as e:
-        logger.error(f"[ERROR] update_wallet: {e}")
+    record = get_user_record(user_id)
+    if record:
+        fields = record['fields']
+        prev = fields.get("wallet")
+        patch = {"fields": {"wallet": wallet}}
+        requests.patch(f"{AIRTABLE_USERS_URL}/{record['id']}", headers=HEADERS, json=patch)
+        log_action(user_id, '', "Wallet updated" if prev else "Wallet saved", wallet)
+        return "updated" if prev else "saved"
     return "error"
 
 def validate_wallet(wallet):
@@ -89,8 +86,9 @@ async def is_subscribed(user_id):
         return False
 
 def get_referral_count(referrer_id):
-    records = users_sheet.get_all_records()
-    return sum(1 for r in records if str(r.get('referrer_id')) == str(referrer_id))
+    r = requests.get(AIRTABLE_USERS_URL, headers=HEADERS)
+    records = r.json().get("records", [])
+    return sum(1 for r in records if r['fields'].get('referrer_id') == str(referrer_id))
 
 welcome_keyboard = InlineKeyboardMarkup(row_width=2).add(
     InlineKeyboardButton("📬 Invite Friends", callback_data="invite"),
@@ -115,8 +113,16 @@ async def send_welcome(message: types.Message):
     referrer_id = args if args.isdigit() else ''
 
     if not is_registered(user_id):
-        users_sheet.append_row([user_id, username, '', referrer_id])
-        log_action(user_id, username, "Registered", f"Referred by: {referrer_id if referrer_id else 'None'}")
+        data = {
+            "fields": {
+                "user_id": str(user_id),
+                "username": username,
+                "wallet": "",
+                "referrer_id": referrer_id
+            }
+        }
+        requests.post(AIRTABLE_USERS_URL, headers=HEADERS, json=data)
+        log_action(user_id, username, "Registered", f"Referred by: {referrer_id or 'None'}")
 
     await message.answer(
         "🚀 <b>Welcome to the MarsUnity Meme Coin AirDrop!</b> 🌌\n\n"
@@ -139,18 +145,14 @@ async def send_welcome(message: types.Message):
 @dp.message_handler(commands=['status'])
 async def status(message: types.Message):
     user_id = str(message.from_user.id)
-    records = users_sheet.get_all_records()
-    for row in records:
-        if str(row['user_id']) == user_id:
-            wallet = row['wallet'] if row['wallet'] else "(not provided)"
-            invites = get_referral_count(user_id)
-            await message.answer(
-                f"📋 Your Airdrop status:\n\n"
-                f"🔹 Wallet: {wallet}\n"
-                f"🔸 Invites: {invites}"
-            )
-            return
-    await message.answer("You are not registered. Please type /start to begin.")
+    record = get_user_record(user_id)
+    if record:
+        fields = record['fields']
+        wallet = fields.get('wallet', '(not provided)')
+        invites = get_referral_count(user_id)
+        await message.answer(f"📋 Your Airdrop status:\n\n🔹 Wallet: {wallet}\n🔸 Invites: {invites}")
+    else:
+        await message.answer("You are not registered. Please type /start to begin.")
 
 @dp.message_handler(commands=['admin'])
 async def admin_stats(message: types.Message):
@@ -159,9 +161,10 @@ async def admin_stats(message: types.Message):
         await message.answer("⛔ You are not allowed to use this command.")
         return
 
-    records = users_sheet.get_all_records()
+    r = requests.get(AIRTABLE_USERS_URL, headers=HEADERS)
+    records = r.json().get("records", [])
     total = len(records)
-    with_wallet = sum(1 for r in records if r.get('wallet'))
+    with_wallet = sum(1 for r in records if r['fields'].get('wallet'))
     await message.answer(f"👥 Total users: {total}\n💳 Wallets submitted: {with_wallet}")
 
 @dp.message_handler(lambda message: message.chat.type == 'private')
@@ -183,9 +186,7 @@ async def save_wallet(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == 'wallet')
 async def handle_wallet(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id,
-        "💳 Please enter your Solana wallet address.",
-        parse_mode="Markdown")
+    await bot.send_message(callback_query.from_user.id, "💳 Please enter your Solana wallet address.")
 
 @dp.callback_query_handler(lambda c: c.data == 'invite')
 async def handle_invite(callback_query: types.CallbackQuery):
