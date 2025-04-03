@@ -39,6 +39,11 @@ if not GOOGLE_CREDS_BASE64:
     raise ValueError("❌ GOOGLE_CREDS_BASE64 is not set. Check your Railway Variables.")
 
 creds_dict = json.loads(base64.b64decode(GOOGLE_CREDS_BASE64))
+
+# Fix escaped newlines in private key
+if "private_key" in creds_dict:
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
 credentials = Credentials.from_service_account_info(creds_dict, scopes=[
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"])
@@ -118,7 +123,7 @@ async def send_welcome(message: types.Message):
         "Get ready to claim your meme coin with a cosmic soul! ✨\n\n"
         "To join the fun, simply:\n\n"
         "🚀 Follow us on <a href='https://x.com/MarsUnity42'>Twitter</a>\n"
-        "📡 Join our <a href='https://t.me/marsunity42'>Telegram channel</a>\n"
+        "📱 Join our <a href='https://t.me/marsunity42'>Telegram channel</a>\n"
         "👨‍🚀 Invite your friends (use the handy button below!)\n"
         "🛸 Submit your Solana wallet address\n\n"
         "🎉 Guaranteed AirDrop for each wallet!\n\n"
@@ -126,7 +131,7 @@ async def send_welcome(message: types.Message):
         "- AirDrop continues until all allocated tokens are claimed.\n"
         "- Each wallet can claim tokens once—no double dips allowed!\n"
         "- We reserve the right to verify compliance with all conditions.\n\n"
-        "Once all tokens designated for the AirDrop are claimed, the event will end—so hurry! 🚨✨",
+        "Once all tokens designated for the AirDrop are claimed, the event will end—so hurry! ⚠️✨",
         parse_mode='HTML',
         reply_markup=welcome_keyboard
     )
